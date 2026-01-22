@@ -63,5 +63,36 @@ degraded_report = monitor.detect_degradation(
     probabilities=noisy_probs
 )
 
-print("\n================ DEGRADED CHECK =================")
-print(degraded_report)
+def pretty_report(report, title):
+    print("\n" + "=" * 70)
+    print(f"{title}")
+    print("=" * 70)
+
+    if not report["degraded"]:
+        print("Status        : HEALTHY")
+        print("System Verdict: Model behavior is stable. No action required.")
+        print("Cognis Note   : I checked twice. Everything looks fine.")
+    else:
+        print("Status        : DEGRADED")
+        print("System Verdict: Performance degradation detected.")
+        print("Cognis Note   : Something changed. I wonder why? ")
+
+        print("\nDetected Signals:")
+        for k, v in report["alerts"].items():
+            if isinstance(v, dict):
+                print(f"  - {k}: statistically significant drift detected")
+            else:
+                print(f"  - {k}: deviation = {round(float(v), 4)}")
+
+    print("\nSummary Metrics:")
+    for k, v in report["current_metrics"].items():
+        if isinstance(v, dict):
+            continue
+        print(f"  {k:<20}: {round(float(v), 4)}")
+
+    print("=" * 70 + "\n")
+
+pretty_report(
+    healthy_report,
+    title="COGNIS HEALTH CHECK REPORT (STABLE SCENARIO)"
+)
