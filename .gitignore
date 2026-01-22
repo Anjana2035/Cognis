@@ -2,6 +2,9 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+utils/__pycache__/config.cpython-311.pyc
+utils/__pycache__/drift.cpython-311.pyc
+utils/__pycache__/metrics.cpython-311.pyc
 
 venv/
 .env/
