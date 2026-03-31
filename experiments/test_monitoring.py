@@ -48,8 +48,6 @@ healthy_report = monitor.detect_degradation(
     probabilities=base_probs
 )
 
-print("\n================ HEALTH CHECK ==================")
-print(healthy_report)
 
 
 np.random.seed(42)
