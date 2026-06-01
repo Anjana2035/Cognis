@@ -6,12 +6,13 @@ from utils.metrics import compute_performance_metrics
 from core.diagnosis import DiagnosisEngine
 from core.fixer import Fixer
 from core.explainer import Explainer
+from core.validator import Validator
 
 
 class Cognis:
 
     def __init__(self, model, X_baseline, y_baseline, thresholds,
-                 api_url=None, api_key=None, max_iters=10):
+                 api_key=None, max_iters=10):
 
         self.interface = ModelInterface(model)
         self.thresholds = thresholds
@@ -19,7 +20,10 @@ class Cognis:
 
         self.diagnoser = DiagnosisEngine()
         self.fixer = Fixer()
-        self.explainer = Explainer(api_url=api_url, api_key=api_key)
+        self.validator = Validator()
+
+        # ✅ Updated Explainer (no api_url anymore)
+        self.explainer = Explainer(api_key=api_key)
 
         # === Baseline ===
         baseline_eval = self.interface.evaluate(X_baseline, y_baseline)
@@ -68,7 +72,7 @@ class Cognis:
                     monitoring_output,
                     diagnosis_output,
                     {"action": "none", "status": "skipped"},
-                    monitoring_output  # same before/after
+                    monitoring_output
                 )
 
                 history.append({
@@ -77,6 +81,7 @@ class Cognis:
                     "monitoring_after": monitoring_output,
                     "diagnosis": diagnosis_output,
                     "healing": None,
+                    "validation": None,
                     "explanation": explanation
                 })
 
@@ -86,7 +91,9 @@ class Cognis:
                     "final_status": "stable"
                 }
 
-            # === Step 4: Apply Fix ===
+            # === Step 4: Backup + Apply Fix ===
+            backup_interface = self.validator.backup_model(self.interface)
+
             healing_output = self.fixer.apply_fix(
                 self.interface,
                 diagnosis_output,
@@ -103,13 +110,23 @@ class Cognis:
                 new_eval["probabilities"]
             )
 
-            # === Step 6: Generate Explanation ===
+            # === Step 6: Validate Improvement ===
+            validation_output = self.validator.validate(
+                monitoring_output,
+                new_monitoring
+            )
+
+            # === Step 7: Rollback if needed ===
+            if validation_output["decision"] == "rollback":
+                self.validator.restore_model(self.interface, backup_interface)
+
+            # === Step 8: Generate Explanation ===
             explanation = self.explainer.generate(
                 model_name,
-                monitoring_output,   # BEFORE
+                monitoring_output,
                 diagnosis_output,
                 healing_output,
-                new_monitoring       # AFTER
+                new_monitoring
             )
 
             history.append({
@@ -118,18 +135,17 @@ class Cognis:
                 "monitoring_after": new_monitoring,
                 "diagnosis": diagnosis_output,
                 "healing": healing_output,
+                "validation": validation_output,
                 "explanation": explanation
             })
 
-            # === Step 7: Check if FIX worked ===
-            if not new_monitoring["degraded"]:
+            # === Step 9: STOP if validated improvement ===
+            if validation_output["decision"] == "promote":
                 return {
                     "baseline_metrics": self.baseline_metrics,
                     "history": history,
                     "final_status": "stable"
                 }
-
-            # Otherwise loop continues...
 
         # === Max Iterations Reached ===
         return {

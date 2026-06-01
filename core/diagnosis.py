@@ -40,6 +40,15 @@ class DiagnosisEngine:
         """
 
         # ✅ SAFE STATE CHECK
+        # 🔥 PREVENT FALSE DRIFT AFTER IMPROVEMENT
+        if not monitoring_output.get("degraded", False):
+            return {
+                "issue": "no_issue",
+                "confidence": 1.0,
+                "reason": "Model is stable. No degradation detected.",
+                "signals_used": []
+            }
+
         if not monitoring_output.get("degraded", False):
             return {
                 "issue": "no_issue",

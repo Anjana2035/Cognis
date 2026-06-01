@@ -1,25 +1,27 @@
+import os
+from openai import api_key
 import requests
 
 
 class Explainer:
     """
     LLM-based narrator for Cognis.
-    Produces step-wise explanations with fallback support.
+    Uses Gemini REST API with fallback support.
     """
 
-    def __init__(self, api_url=None, api_key=None):
-        self.api_url = api_url
-        self.api_key = api_key
+    def __init__(self, api_key=None):
+        self.api_key = api_key or os.getenv("GEMINI_API_KEY")
+
+        self.api_url = (
+            "https://generativelanguage.googleapis.com/v1beta/"
+            "models/gemini-flash-latest:generateContent"
+        )
 
     # =========================
     # PUBLIC METHOD
     # =========================
 
     def generate(self, model_name, before_monitoring, diagnosis, fix, after_monitoring=None):
-        """
-        Generates explanation for one iteration.
-        """
-
         prompt = self._build_prompt(
             model_name,
             before_monitoring,
@@ -28,7 +30,7 @@ class Explainer:
             after_monitoring
         )
 
-        if self.api_url:
+        if self.api_key:
             response = self._call_llm(prompt)
             if response:
                 return response
@@ -42,30 +44,46 @@ class Explainer:
         )
 
     # =========================
-    # LLM CALL
+    # GEMINI REST CALL
     # =========================
 
     def _call_llm(self, prompt):
         try:
+            headers = {
+                "Content-Type": "application/json",
+                "X-goog-api-key": self.api_key
+            }
+
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt}
+                        ]
+                    }
+                ]
+            }
+
             response = requests.post(
                 self.api_url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}"
-                },
-                json={
-                    "prompt": prompt,
-                    "max_tokens": 300
-                },
-                timeout=5
+                headers=headers,
+                json=payload,
+                timeout=10
             )
 
             if response.status_code != 200:
                 return None
 
             data = response.json()
-            return data.get("text") or data.get("response")
 
-        except Exception:
+            # Safe extraction
+            try:
+                return data["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError):
+                return None
+
+        except Exception as e:
+            print("LLM ERROR:", e)
             return None
 
     # =========================
@@ -73,31 +91,38 @@ class Explainer:
     # =========================
 
     def _build_prompt(self, model_name, before, diagnosis, fix, after):
+        before_acc = before["current_metrics"]["accuracy"]
+
+        after_acc = None
+        if after:
+            after_acc = after["current_metrics"]["accuracy"]
+
         return f"""
-You are an intelligent AI system explaining model health step-by-step.
+You are Cognis, an intelligent self-healing AI system.
+
+Explain the model behavior step-by-step in a clear and slightly conversational tone.
 
 Model: {model_name}
 
 Before Fix:
-{before}
+Accuracy: {round(before_acc, 3)}
 
 Diagnosis:
-{diagnosis}
+Issue: {diagnosis.get('issue')}
+Reason: {diagnosis.get('reason')}
 
 Fix Applied:
-{fix}
+{fix.get('action')} ({fix.get('status')})
 
 After Fix:
-{after}
+Accuracy: {round(after_acc, 3) if after_acc is not None else 'N/A'}
 
-Explain clearly:
-1. What was observed initially
-2. What problem was detected
-3. Why it occurred
-4. What fix was applied
-5. What changed after the fix
-6. Whether performance improved or not
-7. If not improved, mention retry
+Instructions:
+- Explain what happened
+- Explain why the issue occurred
+- Explain what fix was applied
+- Compare before vs after
+- If no improvement, say retry is needed
 """
 
     # =========================
@@ -112,8 +137,6 @@ Explain clearly:
         if after:
             after_acc = after["current_metrics"]["accuracy"]
 
-        improvement_text = "unknown"
-
         if after_acc is not None:
             if after_acc > before_acc:
                 improvement_text = "Model performance improved."
@@ -121,6 +144,8 @@ Explain clearly:
                 improvement_text = "No noticeable improvement."
             else:
                 improvement_text = "Model performance decreased."
+        else:
+            improvement_text = "Improvement unknown."
 
         return (
             f"Observing model '{model_name}'. "

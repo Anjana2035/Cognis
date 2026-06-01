@@ -74,7 +74,7 @@ class HealthMonitor:
         confidence = probabilities.max(axis=1)
         wrong = (y_pred != y_true)
 
-        high_conf_wrong = (confidence > 0.9) & wrong
+        high_conf_wrong = (confidence > 0.8) & wrong
         ratio = np.mean(high_conf_wrong)
 
         return {
@@ -125,7 +125,16 @@ class HealthMonitor:
         # === Severity Score ===
         severity_score = sum(s["weight"] for s in triggered_signals)
 
-        degraded = severity_score >= 3  # simple threshold
+        # 🔥 smarter degradation logic
+        accuracy = current_metrics["accuracy"]
+        drop = self.baseline_metrics["accuracy"] - accuracy
+
+        # 🔥 Allow degradation from signals OR accuracy drop
+
+        degraded = (
+            severity_score >= 3 or
+            drop > self.thresholds["accuracy_drop"]
+        ) # simple threshold
 
         return {
             "current_metrics": current_metrics,
