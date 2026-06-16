@@ -1,4 +1,7 @@
 import copy
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Validator:
@@ -29,6 +32,8 @@ class Validator:
             decision = "rollback"
             reason = "No improvement or degradation"
 
+        logger.info(f"Validation: {decision} | improvement={round(improvement, 4)} | reason={reason}")
+
         return {
             "decision": decision,
             "improvement": round(improvement, 4),
@@ -41,10 +46,14 @@ class Validator:
         """
         Create a deep copy of current model state.
         """
+        logger.info("Backing up model state.")
         return copy.deepcopy(model_interface)
 
     def restore_model(self, model_interface, backup_interface):
         """
         Restore previous model state.
         """
+        logger.info("Rolling back to previous model state.")
         model_interface.model = backup_interface.model
+        model_interface._temperature_probs = backup_interface._temperature_probs
+        model_interface._temperature = backup_interface._temperature

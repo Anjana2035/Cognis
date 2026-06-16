@@ -1,123 +1,285 @@
-# Cognis  
-### A Model-Agnostic Self-Healing System for Autonomous Monitoring, Diagnosis, and Repair of Machine Learning Models
+# COGNIS
 
----
+### Self-Healing AI Framework for Monitoring, Diagnosis, and Autonomous Recovery of Machine Learning Models
 
 ## Overview
 
-(TEMPORARY README)
-Cognis is a system-level framework designed to ensure the long-term reliability of machine learning models deployed in dynamic environments. Instead of focusing on building a new learning algorithm, Cognis operates around any user-defined supervised machine learning model to continuously monitor its performance, detect degradation, diagnose the underlying cause, and apply targeted repairs in a safe and autonomous manner.
+COGNIS is a lightweight, model-agnostic self-healing AI framework designed to monitor machine learning models, detect performance degradation, diagnose the underlying cause, apply corrective actions, validate repairs, and explain its decisions in natural language.
 
-Traditional machine learning pipelines rely heavily on manual monitoring and periodic retraining, which is inefficient and error-prone in real-world deployments. Cognis addresses this limitation by introducing an autonomous self-healing loop that manages model health throughout its lifecycle.
+Unlike traditional machine learning deployments that rely on manual monitoring and retraining, COGNIS continuously evaluates model health and attempts to recover from common failure modes automatically.
+
+The framework treats the machine learning model as a black box and focuses on reliability, observability, and autonomous maintenance.
 
 ---
 
 ## Key Features
 
-- **Model-Agnostic Design**  
-  Works with any supervised classification or regression model without dependency on model architecture or algorithm.
+### Model-Agnostic Architecture
 
-- **Continuous Monitoring**  
-  Tracks performance metrics, confidence behavior, and data distribution changes during deployment.
+COGNIS can work with any classification model that supports standard prediction interfaces.
 
-- **Root-Cause Diagnosis**  
-  Identifies specific causes of degradation such as concept drift, class imbalance, label noise, or calibration error.
+### Continuous Health Monitoring
 
-- **Targeted Self-Healing**  
-  Applies diagnosis-driven repair strategies instead of blind retraining.
+Tracks multiple performance and behavioral signals including:
 
-- **Safety Validation and Rollback**  
-  Ensures repaired models are deployed only if they demonstrate measurable improvement.
+* Accuracy
+* Log Loss
+* Confidence Distribution
+* Prediction Entropy
+* Confidence Drift
+* Class Distribution Changes
+* Calibration Error Indicators
 
-- **Experience-Based Adaptation**  
-  Learns from past failures and successful repairs to improve future healing efficiency.
+### Root Cause Diagnosis
 
-- **Transparent Visualization**  
-  Provides a clear view of model health and healing history through an interactive dashboard.
+Uses a rule-based diagnosis engine to identify likely causes of degradation.
+
+Currently supported diagnoses:
+
+* Concept Drift
+* Class Imbalance
+* Label Noise
+* Calibration Error
+
+### Autonomous Self-Healing
+
+Applies targeted recovery strategies based on the diagnosed issue.
+
+Examples include:
+
+* Fine-tuning / retraining
+* Class reweighting
+* Noise-aware weighting
+* Temperature scaling
+
+### Safety Validation and Rollback
+
+Every repair is validated before promotion.
+
+If performance does not improve:
+
+* The candidate repair is rejected
+* The model is rolled back to its previous stable state
+
+### Natural Language Explanations
+
+COGNIS generates human-readable reports describing:
+
+* What was detected
+* Why it occurred
+* What repair was applied
+* Whether the repair succeeded
+
+LLM support is optional and includes fallback explanations when external APIs are unavailable.
+
+### Interactive Dashboard
+
+Includes a Streamlit-based interface for:
+
+* Model upload
+* Dataset upload
+* Diagnosis execution
+* Conversational-style explanation output
 
 ---
 
 ## System Architecture
 
-Cognis is organized into five core modules:
-
-1. **Model Interface and Execution Module**  
-   Acts as an abstraction layer between Cognis and the user-defined model. Executes training, inference, and evaluation while treating the model as a black box.
-
-2. **Monitoring and Degradation Detection Module**  
-   Continuously evaluates model performance, confidence patterns, and distribution shifts by comparing current behavior against baseline profiles.
-
-3. **Root Cause Diagnosis Module**  
-   Uses rule-based logic to identify the most likely cause of performance degradation based on observed metric deviations.
-
-4. **Self-Healing and Safety Validation Module**  
-   Applies targeted repair strategies and validates repaired models using shadow testing before deployment.
-
-5. **Experience Memory and Visualization Module**  
-   Stores historical healing outcomes and presents system behavior using a visual timeline dashboard.
-
----
-
-## Dataset Usage
-
-Cognis does not require a dedicated dataset of its own. Datasets are used only to train and evaluate the underlying machine learning model.
-
-Typical dataset usage includes:
-- Training the baseline model
-- Establishing baseline performance profiles
-- Monitoring deployed model behavior
-- Validating repaired model candidates
-
-Public benchmark datasets such as MNIST or CIFAR-10 are commonly used for demonstration and evaluation.
-
----
-
-## How Cognis Works (High-Level Flow)
-
-1. A user-defined machine learning model is trained using a standard dataset.
-2. Cognis records baseline performance and behavior metrics.
-3. During deployment, Cognis continuously monitors the model.
-4. When degradation is detected, Cognis diagnoses the root cause.
-5. A targeted repair strategy is applied to generate a candidate model.
-6. The candidate model is validated in shadow mode.
-7. Successful repairs are deployed; unsuccessful ones are rolled back.
-8. The outcome is stored to improve future healing decisions.
+```text
+                 ┌───────────────────┐
+                 │ Uploaded ML Model │
+                 └─────────┬─────────┘
+                           │
+                           ▼
+                 ┌───────────────────┐
+                 │ Model Interface   │
+                 └─────────┬─────────┘
+                           │
+                           ▼
+                 ┌───────────────────┐
+                 │ Health Monitor    │
+                 └─────────┬─────────┘
+                           │
+                           ▼
+                 ┌───────────────────┐
+                 │ Diagnosis Engine  │
+                 └─────────┬─────────┘
+                           │
+                           ▼
+                 ┌───────────────────┐
+                 │ Self-Healing      │
+                 │ Engine            │
+                 └─────────┬─────────┘
+                           │
+                           ▼
+                 ┌───────────────────┐
+                 │ Validator         │
+                 └─────────┬─────────┘
+                           │
+                 ┌─────────▼─────────┐
+                 │ Explainer (LLM)   │
+                 └─────────┬─────────┘
+                           │
+                           ▼
+                 ┌───────────────────┐
+                 │ Dashboard UI      │
+                 └───────────────────┘
+```
 
 ---
 
-## Technologies Used
+## Project Structure
 
-- **Programming Language:** Python  
-- **ML Libraries:** scikit-learn, PyTorch (user choice)  
-- **Data Processing:** NumPy, Pandas  
-- **Statistical Analysis:** SciPy  
-- **Visualization:** Streamlit  
+```text
+COGNIS/
+│
+├── core/
+│   ├── cognis.py
+│   ├── model_interface.py
+│   ├── monitoring.py
+│   ├── diagnosis.py
+│   ├── fixer.py
+│   ├── validator.py
+│   └── explainer.py
+│
+├── utils/
+│   ├── config.py
+│   ├── metrics.py
+│   └── drift.py
+│
+├── dashboard/
+│   └── app.py
+│
+├── experiments/
+│   └── tests
+│
+└── README.md
+```
 
 ---
 
-## Scope and Limitations
+## Monitoring Signals
 
-### In Scope
-- Supervised classification and regression models
-- Autonomous monitoring and repair
-- Rule-based diagnosis
-- Safe deployment with rollback
-- Experience-based adaptation
+COGNIS evaluates several independent monitoring signals:
 
-### Out of Scope
-- Designing new learning algorithms
-- Unsupervised or reinforcement learning models
-- Large-scale distributed deployment
-- Fully automated data labeling
+| Signal                      | Purpose                                 |
+| --------------------------- | --------------------------------------- |
+| Accuracy Drop               | Detects performance degradation         |
+| Entropy Shift               | Detects uncertainty changes             |
+| Confidence Drift            | Detects confidence distribution changes |
+| Class Imbalance             | Detects class distribution skew         |
+| Label Noise Indicator       | Detects high-confidence mistakes        |
+| Calibration Error Indicator | Detects confidence-accuracy mismatch    |
 
 ---
 
-## Project Status
+## Diagnosis Rules
 
-This repository contains the implementation of Cognis as an academic system-level project focused on autonomous machine learning reliability. Future extensions may include advanced explanation layers and integration with language models for enhanced interpretability.
+The diagnosis engine combines monitoring signals to identify likely causes.
+
+| Diagnosed Issue   | Primary Signals                                  |
+| ----------------- | ------------------------------------------------ |
+| Concept Drift     | Accuracy Drop + Entropy Shift + Confidence Drift |
+| Class Imbalance   | Class Distribution Shift                         |
+| Label Noise       | High Confidence Incorrect Predictions            |
+| Calibration Error | Confidence vs Accuracy Gap                       |
+
+---
+
+## Healing Strategies
+
+| Issue             | Strategy              |
+| ----------------- | --------------------- |
+| Concept Drift     | Fine-Tuning           |
+| Class Imbalance   | Class Reweighting     |
+| Label Noise       | Noise-Aware Weighting |
+| Calibration Error | Temperature Scaling   |
+
+---
+
+## Installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/your-repository/cognis.git
+cd cognis
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Running the Dashboard
+
+```bash
+streamlit run app.py
+```
+
+Open the local Streamlit URL shown in the terminal.
+
+---
+
+## Workflow
+
+1. Upload a trained model.
+2. Upload evaluation data.
+3. Optionally upload baseline data.
+4. Run diagnosis.
+5. COGNIS:
+
+   * Evaluates model health
+   * Detects degradation
+   * Diagnoses root cause
+   * Applies repair
+   * Validates repair
+   * Generates explanation
+6. Review results through the dashboard.
+
+---
+
+## Current Status
+
+Implemented:
+
+* Model Interface Layer
+* Health Monitoring System
+* Signal-Based Detection
+* Diagnosis Engine
+* Self-Healing Engine
+* Validation & Rollback
+* LLM Explanation Layer
+* Streamlit Dashboard
+
+Planned:
+
+* Experience Memory
+* Healing Timeline Visualization
+* Historical Recovery Analytics
+* Adaptive Repair Recommendation System
+
+---
+
+## Design Philosophy
+
+COGNIS is intentionally lightweight.
+
+The goal is not to build a large autonomous AI agent, but to create a practical and explainable framework capable of improving the reliability of deployed machine learning systems.
+
+The framework prioritizes:
+
+* Transparency
+* Safety
+* Explainability
+* Modularity
+* Low Resource Consumption
 
 ---
 
 ## License
 
-This project is intended for academic and educational use.
+MIT License

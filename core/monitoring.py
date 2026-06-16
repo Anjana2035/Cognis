@@ -1,7 +1,10 @@
+import logging
 import numpy as np
 from utils.metrics import compute_performance_metrics
 from utils.drift import confidence_drift
 from utils.config import THRESHOLDS
+
+logger = logging.getLogger(__name__)
 
 
 class HealthMonitor:
@@ -59,7 +62,6 @@ class HealthMonitor:
         baseline_classes = list(self.baseline_metrics["classwise_accuracy"].keys())
         baseline_dist = np.ones(len(baseline_classes)) / len(baseline_classes)
 
-        # Align lengths
         min_len = min(len(current_dist), len(baseline_dist))
         shift = np.abs(current_dist[:min_len] - baseline_dist[:min_len]).mean()
 
@@ -110,7 +112,6 @@ class HealthMonitor:
             y_true, y_pred, probabilities
         )
 
-        # === Generate Signals ===
         signals = [
             self._accuracy_drop_signal(current_metrics),
             self._entropy_shift_signal(current_metrics),
@@ -122,19 +123,20 @@ class HealthMonitor:
 
         triggered_signals = [s for s in signals if s["triggered"]]
 
-        # === Severity Score ===
         severity_score = sum(s["weight"] for s in triggered_signals)
 
-        # 🔥 smarter degradation logic
         accuracy = current_metrics["accuracy"]
         drop = self.baseline_metrics["accuracy"] - accuracy
-
-        # 🔥 Allow degradation from signals OR accuracy drop
 
         degraded = (
             severity_score >= 3 or
             drop > self.thresholds["accuracy_drop"]
-        ) # simple threshold
+        )
+
+        logger.info(
+            f"Monitoring: accuracy={round(accuracy, 4)}, "
+            f"drop={round(drop, 4)}, severity={severity_score}, degraded={degraded}"
+        )
 
         return {
             "current_metrics": current_metrics,

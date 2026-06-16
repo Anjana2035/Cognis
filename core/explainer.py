@@ -1,12 +1,15 @@
 import os
-from openai import api_key
+import logging
 import requests
+
+logger = logging.getLogger(__name__)
 
 
 class Explainer:
     """
     LLM-based narrator for Cognis.
     Uses Gemini REST API with fallback support.
+    FIX: Removed wrong 'from openai import api_key' import.
     """
 
     def __init__(self, api_key=None):
@@ -14,7 +17,7 @@ class Explainer:
 
         self.api_url = (
             "https://generativelanguage.googleapis.com/v1beta/"
-            "models/gemini-flash-latest:generateContent"
+            "models/gemini-2.0-flash:generateContent"
         )
 
     # =========================
@@ -35,6 +38,7 @@ class Explainer:
             if response:
                 return response
 
+        logger.warning("No API key or LLM call failed. Using fallback explainer.")
         return self._fallback(
             model_name,
             before_monitoring,
@@ -72,18 +76,19 @@ class Explainer:
             )
 
             if response.status_code != 200:
+                logger.error(f"Gemini API error: {response.status_code} - {response.text}")
                 return None
 
             data = response.json()
 
-            # Safe extraction
             try:
                 return data["candidates"][0]["content"]["parts"][0]["text"]
-            except (KeyError, IndexError):
+            except (KeyError, IndexError) as e:
+                logger.error(f"Failed to parse Gemini response: {e}")
                 return None
 
         except Exception as e:
-            print("LLM ERROR:", e)
+            logger.error(f"LLM call exception: {e}")
             return None
 
     # =========================
@@ -148,16 +153,13 @@ Instructions:
             improvement_text = "Improvement unknown."
 
         return (
-            f"Observing model '{model_name}'. "
-            f"Initial accuracy: {round(before_acc, 3)}. "
-            f"Detected issue: {diagnosis.get('issue')}. "
-            f"Reason: {diagnosis.get('reason')}. "
+            f"Observing model '{model_name}'. \n\n "
+            f"Initial accuracy: {round(before_acc, 3)}. \n\n"
+            f"Detected issue: {diagnosis.get('issue')}. \n\n"
+            f"Reason: {diagnosis.get('reason')}. \n\n"
             f"Applying fix: {fix.get('action')}.\n\n"
-
             f"Re-evaluating after applying fix... "
-
             f"New accuracy: {round(after_acc, 3) if after_acc is not None else 'N/A'}. "
             f"{improvement_text} "
-
             f"{'Retrying further optimization...' if improvement_text != 'Model performance improved.' else 'System stabilized.'}"
         )

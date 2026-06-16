@@ -1,3 +1,8 @@
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 class DiagnosisEngine:
     """
     Rule-based diagnosis engine with safe-state handling.
@@ -39,17 +44,9 @@ class DiagnosisEngine:
         Determines root cause OR confirms healthy state.
         """
 
-        # ✅ SAFE STATE CHECK
-        # 🔥 PREVENT FALSE DRIFT AFTER IMPROVEMENT
+        # FIX: Removed duplicate safe-state check (was written twice before)
         if not monitoring_output.get("degraded", False):
-            return {
-                "issue": "no_issue",
-                "confidence": 1.0,
-                "reason": "Model is stable. No degradation detected.",
-                "signals_used": []
-            }
-
-        if not monitoring_output.get("degraded", False):
+            logger.info("Model is stable. No degradation detected.")
             return {
                 "issue": "no_issue",
                 "confidence": 1.0,
@@ -60,6 +57,7 @@ class DiagnosisEngine:
         triggered = monitoring_output.get("triggered_signals", [])
 
         if not triggered:
+            logger.warning("Degradation detected but no clear signal pattern found.")
             return {
                 "issue": "unknown",
                 "confidence": 0.0,
@@ -86,6 +84,7 @@ class DiagnosisEngine:
                 }
 
         if not issue_scores:
+            logger.warning("Signals detected but do not match known patterns.")
             return {
                 "issue": "unknown",
                 "confidence": 0.0,
@@ -99,6 +98,8 @@ class DiagnosisEngine:
 
         max_possible_score = sum(self.issue_rules[best_issue]["signals"].values())
         confidence = best_score / max_possible_score if max_possible_score > 0 else 0.0
+
+        logger.info(f"Diagnosed issue: {best_issue} (confidence={round(confidence, 3)})")
 
         return {
             "issue": best_issue,

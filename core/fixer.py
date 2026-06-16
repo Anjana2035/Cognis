@@ -1,13 +1,20 @@
+import logging
 import numpy as np
 from copy import deepcopy
+
+logger = logging.getLogger(__name__)
 
 
 class Fixer:
     """
     Advanced Fixer with validation-driven strategy selection.
+    FIX: temperature_scaling now stores scaled probs on model and actually affects predictions.
+    FIX: temperature is now configurable via constructor.
     """
 
-    def __init__(self):
+    def __init__(self, temperature=1.5):
+        self.temperature = temperature  # FIX: configurable, not hard-coded
+
         self.strategy_map = {
             "concept_drift": [self._fine_tune],
             "class_imbalance": [self._reweight_classes],
@@ -19,6 +26,7 @@ class Fixer:
         issue = diagnosis_output.get("issue")
 
         if issue not in self.strategy_map:
+            logger.warning(f"No fix strategy for issue: {issue}")
             return {
                 "action": "none",
                 "status": "skipped",
@@ -27,7 +35,6 @@ class Fixer:
 
         strategies = self.strategy_map[issue]
 
-        # 🔥 baseline performance
         baseline_preds, baseline_probs = model_interface.predict(X)
         baseline_acc = np.mean(baseline_preds == y)
 
@@ -38,23 +45,30 @@ class Fixer:
         for strategy in strategies:
             try:
                 candidate = deepcopy(model_interface)
-
                 result = strategy(candidate, X, y)
 
                 preds, _ = candidate.predict(X)
                 acc = np.mean(preds == y)
+
+                logger.info(f"Strategy '{result['action']}' accuracy: {round(acc, 4)}")
 
                 if acc > best_acc:
                     best_acc = acc
                     best_result = result
                     best_model = candidate
 
-            except Exception:
+            except Exception as e:
+                logger.error(f"Strategy failed: {e}")
                 continue
 
-        # 🔥 APPLY ONLY IF IMPROVED
         if best_model is not None:
             model_interface.model = best_model.model
+            # FIX: also carry over temperature_probs if set
+            if hasattr(best_model, "_temperature_probs"):
+                model_interface._temperature_probs = best_model._temperature_probs
+                model_interface._temperature = best_model._temperature
+
+            logger.info(f"Applied fix: {best_result['action']} | improvement: {round(best_acc - baseline_acc, 4)}")
 
             return {
                 "action": best_result["action"],
@@ -63,6 +77,7 @@ class Fixer:
                 "improvement": round(best_acc - baseline_acc, 4)
             }
 
+        logger.warning("No strategy improved performance.")
         return {
             "action": "none",
             "status": "failed",
@@ -101,11 +116,9 @@ class Fixer:
         y_pred, probs = interface.predict(X)
         confidence = probs.max(axis=1)
 
-        # 🔥 smarter noise detection
         noisy_mask = (confidence > 0.8) & (y_pred != y)
-
         weights = np.ones(len(y))
-        weights[noisy_mask] = 0.3  # reduce influence, not remove
+        weights[noisy_mask] = 0.3
 
         interface.model.fit(X, y, sample_weight=weights)
 
@@ -115,13 +128,20 @@ class Fixer:
         }
 
     def _temperature_scaling(self, interface, X, y):
+        """
+        FIX: Now stores scaled probabilities on the interface so predict() uses them.
+        Temperature scaling adjusts confidence — stored and applied in ModelInterface.
+        """
         _, probs = interface.predict(X)
 
-        temperature = 1.5
-        scaled_probs = probs ** (1 / temperature)
+        scaled_probs = probs ** (1 / self.temperature)
         scaled_probs /= scaled_probs.sum(axis=1, keepdims=True)
+
+        # FIX: Store temperature config on interface so predict() uses it
+        interface._temperature_probs = scaled_probs
+        interface._temperature = self.temperature
 
         return {
             "action": "temperature_scaling",
-            "details": f"Applied temperature scaling (T={temperature})"
+            "details": f"Applied temperature scaling (T={self.temperature})"
         }
