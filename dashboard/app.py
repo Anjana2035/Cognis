@@ -166,89 +166,6 @@ if run_button and uploaded_model and uploaded_data:
     except Exception as e:
         st.error(f"Error: {str(e)}")
 
-# =========================
-# SAVE / DEPLOY BUTTONS
-# =========================
-result = st.session_state.result
-
-if result and result.get("improved"):
-    st.markdown("---")
-    st.subheader("Model Improved — What would you like to do?")
-
-    save_col, deploy_col = st.columns(2)
-
-    with save_col:
-        final_model = result["final_model"]
-        model_bytes = io.BytesIO()
-        pickle.dump(final_model.model, model_bytes)
-        model_bytes.seek(0)
-
-        st.download_button(
-            label="Save Healed Model (.pkl)",
-            data=model_bytes,
-            file_name="cognis_healed_model.pkl",
-            mime="application/octet-stream"
-        )
-
-        if st.session_state.X is not None:
-            npz_bytes = io.BytesIO()
-            np.savez(npz_bytes, X=st.session_state.X, y=st.session_state.y)
-            npz_bytes.seek(0)
-
-            st.download_button(
-                label="Save Dataset (.npz)",
-                data=npz_bytes,
-                file_name="cognis_dataset.npz",
-                mime="application/octet-stream"
-            )
-
-    with deploy_col:
-        st.markdown("#### Deploy your model")
-        st.markdown(
-            """
-            **Streamlit Community Cloud** — wrap your model in a Streamlit app and deploy for free.
-            [share.streamlit.io](https://share.streamlit.io)
-
-            **Hugging Face Spaces** — upload your `.pkl` and a Gradio or Streamlit app to a Space.
-            [huggingface.co/spaces](https://huggingface.co/spaces)
-
-            **Render** — deploy a FastAPI wrapper as a REST API on the free tier.
-            [render.com](https://render.com)
-            """
-        )
-
-# =========================
-# STRATEGY MEMORY PANEL  (Objective 4)
-# =========================
-if result and result.get("strategy_memory"):
-    st.markdown("---")
-    st.subheader("Experience-Based Learning — Strategy Win Rates")
-    st.caption(
-        "Cognis tracks which healing strategies work for each issue type. "
-        "On each attempt, strategies are ranked by their historical win-rate "
-        "so proven approaches are tried first."
-    )
-
-    memory_summary = result["strategy_memory"]
-
-    if not memory_summary:
-        st.info("No strategies were attempted in this session.")
-    else:
-        for issue, strategies in memory_summary.items():
-            st.markdown(f"**{issue.replace('_', ' ').title()}**")
-            cols = st.columns(len(strategies))
-            for col, (strategy_name, stats) in zip(cols, strategies.items()):
-                win_rate = stats["win_rate"]
-                rate_display = f"{win_rate:.0%}" if isinstance(win_rate, float) else win_rate
-                col.metric(
-                    label=strategy_name.replace("_", " ").title(),
-                    value=rate_display,
-                    delta=f"{stats['wins']}/{stats['attempts']} wins"
-                )
-
-# =========================
-# CHAT UI
-# =========================
 def type_writer_chat(message):
     placeholder = st.empty()
     typed = ""
@@ -278,3 +195,108 @@ with chat_box:
         else:
             type_writer_chat(message)
             time.sleep(0.2)
+
+
+# =========================
+# STRATEGY MEMORY PANEL  (Objective 4)
+# =========================
+result = st.session_state.result
+
+if result and result.get("strategy_memory"):
+    st.markdown("---")
+    st.subheader("Experience-Based Learning — Strategy Win Rates")
+    st.caption(
+        "Cognis tracks which healing strategies work for each issue type. "
+        "On each attempt, strategies are ranked by their historical win-rate "
+        "so proven approaches are tried first."
+    )
+
+    memory_summary = result["strategy_memory"]
+
+    if not memory_summary:
+        st.info("No strategies were attempted in this session.")
+    else:
+        for issue, strategies in memory_summary.items():
+            st.markdown(f"**{issue.replace('_', ' ').title()}**")
+            cols = st.columns(len(strategies))
+            for col, (strategy_name, stats) in zip(cols, strategies.items()):
+                win_rate = stats["win_rate"]
+                rate_display = f"{win_rate:.0%}" if isinstance(win_rate, float) else win_rate
+                col.metric(
+                    label=strategy_name.replace("_", " ").title(),
+                    value=rate_display,
+                    delta=f"{stats['wins']}/{stats['attempts']} wins"
+                )
+
+# =========================
+# SAVE & DEPLOY PANEL
+# Always visible after a run, regardless of whether accuracy improved.
+# =========================
+if result:
+    st.markdown("---")
+    st.subheader("Save or Deploy Your Model")
+
+    improved = result.get("improved", False)
+    if improved:
+        st.success("Cognis improved this model. Download the healed version below.")
+    else:
+        st.info(
+            "Accuracy did not improve, but you can still download the current "
+            "model state or explore deployment options."
+        )
+
+    save_col, deploy_col = st.columns(2)
+
+    # ---- SAVE ----
+    with save_col:
+        st.markdown("#### 💾 Save Model & Dataset")
+
+        final_model = result["final_model"]
+        model_bytes = io.BytesIO()
+        pickle.dump(final_model.model, model_bytes)
+        model_bytes.seek(0)
+
+        st.download_button(
+            label="Download Healed Model (.pkl)",
+            data=model_bytes,
+            file_name="cognis_healed_model.pkl",
+            mime="application/octet-stream",
+            use_container_width=True,
+        )
+
+        if st.session_state.X is not None:
+            npz_bytes = io.BytesIO()
+            np.savez(npz_bytes, X=st.session_state.X, y=st.session_state.y)
+            npz_bytes.seek(0)
+
+            st.download_button(
+                label="Download Dataset (.npz)",
+                data=npz_bytes,
+                file_name="cognis_dataset.npz",
+                mime="application/octet-stream",
+                use_container_width=True,
+            )
+
+    # ---- DEPLOY ----
+    with deploy_col:
+        st.markdown("#### 🚀 Deploy Your Model")
+        st.markdown(
+            """
+| Platform | Best For | Link |
+|---|---|---|
+| **Streamlit Community Cloud** | Streamlit apps, free hosting | [share.streamlit.io](https://share.streamlit.io) |
+| **Hugging Face Spaces** | Gradio / Streamlit, model cards | [huggingface.co/spaces](https://huggingface.co/spaces) |
+| **Render** | FastAPI / REST API, free tier | [render.com](https://render.com) |
+| **Railway** | Docker / Python apps, simple setup | [railway.app](https://railway.app) |
+| **Google Cloud Run** | Scalable containers, pay-per-use | [cloud.google.com/run](https://cloud.google.com/run) |
+| **AWS Lambda** | Serverless inference, low latency | [aws.amazon.com/lambda](https://aws.amazon.com/lambda) |
+            """
+        )
+        st.caption(
+            "Tip: wrap your `.pkl` in a FastAPI or Flask app, "
+            "then deploy via Docker on any platform above."
+        )
+
+# =========================
+# CHAT UI
+# =========================
