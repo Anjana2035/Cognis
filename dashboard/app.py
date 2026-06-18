@@ -39,8 +39,8 @@ if "y" not in st.session_state:
 # =========================
 # FILE UPLOAD
 # =========================
-uploaded_model   = st.file_uploader("Upload your model (.pkl)", type=["pkl"])
-uploaded_data    = st.file_uploader("Upload dataset (.npz / .csv / .xlsx)", type=["npz", "csv", "xlsx"])
+uploaded_model    = st.file_uploader("Upload your model (.pkl)", type=["pkl"])
+uploaded_data     = st.file_uploader("Upload dataset (.npz / .csv / .xlsx)", type=["npz", "csv", "xlsx"])
 uploaded_baseline = st.file_uploader("Upload baseline dataset (optional)", type=["npz", "csv", "xlsx"])
 
 gemini_key = st.text_input("Gemini API Key (optional)", type="password")
@@ -49,6 +49,26 @@ with st.expander("Dataset Format"):
     st.markdown("""
     - `.npz` — must contain keys `X` and `y`
     - `.csv` / `.xlsx` — last column is treated as the target label
+    """)
+
+with st.expander("Why upload a baseline dataset?"):
+    st.markdown("""
+    The **baseline dataset** represents what *healthy* model behaviour looks like.
+    Cognis uses it to compute reference metrics (accuracy, entropy, confidence
+    distribution, class distribution) against which the current evaluation data
+    is compared.
+
+    **If you skip it**, Cognis falls back to treating the uploaded evaluation
+    data as its own baseline.  This is usually fine in demos, but in production
+    it means Cognis has no true reference point — it cannot detect drift or
+    imbalance reliably because the "before" and "after" distributions are the
+    same data.
+
+    **When you should supply one:**
+    - You have a held-out slice of data the model was originally validated on.
+    - You are simulating drift by evaluating on a shifted dataset.
+    - You want meaningful signal-based monitoring (confidence drift, class
+      imbalance) that requires a genuine reference distribution.
     """)
 
 # =========================
@@ -85,12 +105,12 @@ def load_data(file):
 # =========================
 if run_button and uploaded_model and uploaded_data:
     st.session_state.abort = False
-    st.session_state.chat = []
+    st.session_state.chat  = []
     st.session_state.result = None
 
     try:
         model = pickle.load(uploaded_model)
-        X, y = load_data(uploaded_data)
+        X, y  = load_data(uploaded_data)
 
         st.session_state.X = X
         st.session_state.y = y
@@ -136,7 +156,10 @@ if run_button and uploaded_model and uploaded_data:
                 f"You can save or deploy the healed model below."
             )
         else:
-            msg = "Cognis attempted all available strategies but could not improve the model. Manual review recommended."
+            msg = (
+                "Cognis attempted all available strategies but could not improve the model. "
+                "Manual review recommended."
+            )
 
         st.session_state.chat.append(("bot", msg))
 
@@ -193,6 +216,35 @@ if result and result.get("improved"):
             [render.com](https://render.com)
             """
         )
+
+# =========================
+# STRATEGY MEMORY PANEL  (Objective 4)
+# =========================
+if result and result.get("strategy_memory"):
+    st.markdown("---")
+    st.subheader("Experience-Based Learning — Strategy Win Rates")
+    st.caption(
+        "Cognis tracks which healing strategies work for each issue type. "
+        "On each attempt, strategies are ranked by their historical win-rate "
+        "so proven approaches are tried first."
+    )
+
+    memory_summary = result["strategy_memory"]
+
+    if not memory_summary:
+        st.info("No strategies were attempted in this session.")
+    else:
+        for issue, strategies in memory_summary.items():
+            st.markdown(f"**{issue.replace('_', ' ').title()}**")
+            cols = st.columns(len(strategies))
+            for col, (strategy_name, stats) in zip(cols, strategies.items()):
+                win_rate = stats["win_rate"]
+                rate_display = f"{win_rate:.0%}" if isinstance(win_rate, float) else win_rate
+                col.metric(
+                    label=strategy_name.replace("_", " ").title(),
+                    value=rate_display,
+                    delta=f"{stats['wins']}/{stats['attempts']} wins"
+                )
 
 # =========================
 # CHAT UI
