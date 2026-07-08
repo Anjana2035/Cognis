@@ -32,7 +32,7 @@ class Cognis:
     """
 
     def __init__(self, model, X_baseline, y_baseline, thresholds,
-                 api_key=None, max_iters=10, temperature=1.5):
+                 api_key=None, max_iters=3, temperature=1.5):
 
         self.interface  = ModelInterface(model)
         self.thresholds = thresholds

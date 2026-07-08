@@ -43,7 +43,6 @@ uploaded_model    = st.file_uploader("Upload your model (.pkl)", type=["pkl"])
 uploaded_data     = st.file_uploader("Upload dataset (.npz / .csv / .xlsx)", type=["npz", "csv", "xlsx"])
 uploaded_baseline = st.file_uploader("Upload baseline dataset (optional)", type=["npz", "csv", "xlsx"])
 
-gemini_key = st.text_input("Gemini API Key (optional)", type="password")
 
 with st.expander("Dataset Format"):
     st.markdown("""
@@ -128,8 +127,7 @@ if run_button and uploaded_model and uploaded_data:
                 X_baseline=X_baseline,
                 y_baseline=y_baseline,
                 thresholds=THRESHOLDS,
-                api_key=gemini_key or None,
-                max_iters=10,
+                max_iters=3,
                 temperature=1.5
             )
 

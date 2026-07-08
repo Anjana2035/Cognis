@@ -1,6 +1,7 @@
 import logging
 import numpy as np
 from copy import deepcopy
+from sklearn.model_selection import train_test_split
 
 logger = logging.getLogger(__name__)
 
@@ -101,20 +102,34 @@ class Fixer:
         if self._memory is not None:
             strategies = self._memory.rank_strategies(issue, strategies)
 
-        baseline_preds, _ = model_interface.predict(X)
-        baseline_acc = np.mean(baseline_preds == y)
+        # Split into train / held-out val to prevent overfitting.
+        # We train on X_train, but measure quality on X_val only.
+        # If too few samples to split, fall back to full set (small datasets).
+        if len(X) >= 20:
+            X_train, X_val, y_train, y_val = train_test_split(
+                X, y, test_size=0.25, random_state=42, stratify=y
+                if len(np.unique(y)) > 1 else None
+            )
+        else:
+            X_train, X_val, y_train, y_val = X, X, y, y
+            logger.warning("Dataset too small to split — evaluating on full set (overfitting risk).")
 
-        best_acc = -np.inf          # KEY FIX: start at -inf, not baseline_acc
+        baseline_preds, _ = model_interface.predict(X_val)
+        baseline_acc = np.mean(baseline_preds == y_val)
+
+        best_acc = -np.inf
         best_result = None
         best_model = None
 
         for strategy in strategies:
             try:
                 candidate = deepcopy(model_interface)
-                result = strategy(candidate, X, y)
+                # Train on X_train only
+                result = strategy(candidate, X_train, y_train)
 
-                preds, _ = candidate.predict(X)
-                acc = np.mean(preds == y)
+                # Evaluate on held-out X_val — real generalisation score
+                preds, _ = candidate.predict(X_val)
+                acc = np.mean(preds == y_val)
                 improvement = acc - baseline_acc
 
                 logger.info(
@@ -173,10 +188,55 @@ class Fixer:
     # ------------------------------------------------------------------
 
     def _fine_tune(self, interface, X, y):
+        """
+        Retrain with stronger regularization if the underlying model supports it.
+        For sklearn estimators this means tightening C (logistic/SVM) or
+        reducing max_depth / n_estimators (tree models) to reduce overfitting.
+        Falls back to plain refit for other model types.
+        """
+        model = interface.model
+        regularized = False
+
+        try:
+            import sklearn.base as skbase
+            if skbase.is_classifier(model) or skbase.is_regressor(model):
+                params = model.get_params()
+
+                # Logistic Regression / LinearSVC — lower C = more regularization
+                if "C" in params:
+                    new_C = max(params["C"] * 0.5, 1e-4)
+                    model.set_params(C=new_C)
+                    logger.info(f"fine_tune: tightened C → {new_C:.5f}")
+                    regularized = True
+
+                # Decision Tree / Random Forest — cap depth and estimators
+                if "max_depth" in params and params["max_depth"] is not None:
+                    new_depth = max(params["max_depth"] - 1, 1)
+                    model.set_params(max_depth=new_depth)
+                    logger.info(f"fine_tune: reduced max_depth → {new_depth}")
+                    regularized = True
+
+                if "n_estimators" in params:
+                    new_n = max(int(params["n_estimators"] * 0.8), 10)
+                    model.set_params(n_estimators=new_n)
+                    logger.info(f"fine_tune: reduced n_estimators → {new_n}")
+                    regularized = True
+
+                # SVM with kernel — gamma regularization
+                if "gamma" in params and isinstance(params["gamma"], float):
+                    new_gamma = params["gamma"] * 0.5
+                    model.set_params(gamma=new_gamma)
+                    logger.info(f"fine_tune: reduced gamma → {new_gamma:.5f}")
+                    regularized = True
+
+        except Exception as e:
+            logger.warning(f"fine_tune regularization probe failed: {e}")
+
         interface.train(X, y)
+        detail = "Retrained with tightened regularization" if regularized else "Retrained on available data"
         return {
             "action": "fine_tuning",
-            "details": "Retrained model on available data",
+            "details": detail,
         }
 
     def _reweight_classes(self, interface, X, y):
