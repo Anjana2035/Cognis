@@ -175,6 +175,14 @@ if run_button and uploaded_model and uploaded_data:
             #        - baseline class dist → balanced (equal per class)
             #   5. All subsequent monitoring compares the real test batch
             #      against these stored healthy-model reference values.
+            #
+            # IMPORTANT: this baseline is ONLY used by HealthMonitor to decide
+            # whether the live data looks degraded relative to a healthy
+            # reference distribution. It is never used to judge whether
+            # healing "improved" the model — that comparison is always made
+            # against this run's own starting accuracy (see cognis.py's
+            # initial_accuracy / final_accuracy fields), never against this
+            # synthetic 85% number.
             # ------------------------------------------------------------------
             X_baseline, y_baseline = build_synthetic_baseline(X, y)
 
@@ -246,13 +254,22 @@ if run_button and uploaded_model and uploaded_data:
         status   = result["final_status"]
         improved = result.get("improved", False)
 
+        # ------------------------------------------------------------------
+        # FIX: use result["initial_accuracy"] / result["final_accuracy"]
+        # instead of result["baseline_metrics"]["accuracy"] (that's the
+        # SYNTHETIC/uploaded reference dataset's accuracy — e.g. 0.974 —
+        # not this run's starting accuracy) and instead of
+        # result["history"][-1]["monitoring_after"] (that's whatever the
+        # LAST attempt scored, even if that attempt was rolled back).
+        # cognis.py now computes both fields off the same live-data
+        # evaluations it uses internally to decide promote/rollback/best,
+        # so they always describe the model actually being handed back.
+        # ------------------------------------------------------------------
         if status == "stable" and not improved:
             msg = "Model was already healthy — no fixes needed."
         elif improved:
-            before_acc = round(result["baseline_metrics"]["accuracy"], 4)
-            after_acc  = round(
-                result["history"][-1]["monitoring_after"]["current_metrics"]["accuracy"], 4
-            )
+            before_acc = round(result["initial_accuracy"], 4)
+            after_acc  = round(result["final_accuracy"], 4)
             msg = (
                 f"Healing complete. Accuracy improved from {before_acc} to {after_acc}. "
                 f"You can save or deploy the healed model below."

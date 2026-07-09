@@ -29,6 +29,37 @@ class Cognis:
                                         Fixer ranks strategies by win-rate;
                                         every outcome is recorded so future
                                         iterations prefer proven strategies.
+
+    -----------------------------------------------------------------------
+    FIX #1 (kept from previous round): best_accuracy / best_model_snapshot
+    must be seeded from THIS RUN's data (X, y) — evaluated once before the
+    loop — not from self.baseline_metrics["accuracy"], which is computed
+    in __init__ against a different dataset (X_baseline / y_baseline).
+    Those two numbers were never comparable; if the baseline dataset scored
+    higher than anything achievable on the live data, "current_acc >
+    best_accuracy" could fail on every single iteration, and the final
+    restore() would silently hand back the original unhealed model even
+    after healing clearly helped.
+
+    FIX #2 (new): the result dict now carries explicit "initial_accuracy"
+    and "final_accuracy" fields on every return path. Previously app.py had
+    to reach into result["baseline_metrics"]["accuracy"] (wrong dataset,
+    same bug as #1 but on the UI side) and
+    result["history"][-1]["monitoring_after"]["current_metrics"]["accuracy"]
+    for the "after" number — but the last history entry can be a step that
+    got rolled back, so that number does not necessarily describe the
+    model actually being returned as final_model. initial_accuracy and
+    final_accuracy are now computed directly from the same values Cognis
+    itself uses to decide promote/rollback/best-so-far, so they always
+    describe the model that is actually handed back.
+
+    FIX #3 (new): validation_output is now passed into explainer.generate().
+    Previously the explainer had no access to the Validator's actual
+    promote/rollback decision and had to *guess* "promoted" vs "rejected"
+    purely by comparing before/after accuracy on its own. That guess could
+    contradict the real decision (e.g. a strategy recorded as
+    "applied_no_gain" but narrated as "promoted"). The explainer now uses
+    the real decision as source of truth.
     """
 
     def __init__(self, model, X_baseline, y_baseline, thresholds,
@@ -73,15 +104,22 @@ class Cognis:
 
     def start_diagnosis(self, X, y, model_name="Model"):
 
-        history             = []
-        best_accuracy       = self.baseline_metrics["accuracy"]
+        history = []
+
+        # See FIX #1 above. This is the live-data reference point —
+        # everything in this run is compared against it, never against
+        # self.baseline_metrics.
+        initial_eval = self.interface.evaluate(X, y)
+        initial_eval_accuracy = np.mean(initial_eval["y_pred"] == initial_eval["y_true"])
+        best_accuracy = initial_eval_accuracy
         best_model_snapshot = self.validator.backup_model(self.interface)
 
         for step in range(self.max_iters):
             logger.info(f"=== Attempt {step + 1}/{self.max_iters} ===")
 
-            # 1. Evaluate current state
-            evaluation    = self.interface.evaluate(X, y)
+            # 1. Evaluate current state (reuse the eval above on step 0
+            #    instead of scoring the model against X/y twice)
+            evaluation    = initial_eval if step == 0 else self.interface.evaluate(X, y)
             y_true        = evaluation["y_true"]
             y_pred        = evaluation["y_pred"]
             probabilities = evaluation["probabilities"]
@@ -95,10 +133,12 @@ class Cognis:
             # Healthy — stop early
             if not monitoring_output["degraded"]:
                 logger.info("Model is healthy. Stopping.")
+                current_accuracy_this_eval = np.mean(y_pred == y_true)
                 explanation = self.explainer.generate(
                     model_name, monitoring_output, diagnosis_output,
                     {"action": "none", "status": "skipped"},
-                    monitoring_output, step=step
+                    monitoring_output, step=step,
+                    validation_output=None
                 )
                 history.append({
                     "step":              step,
@@ -115,7 +155,9 @@ class Cognis:
                     "final_status":      "stable",
                     "improved":          False,
                     "final_model":       self.interface,
-                    "strategy_memory":   self.memory.summary()  # Obj 4
+                    "strategy_memory":   self.memory.summary(),  # Obj 4
+                    "initial_accuracy":  initial_eval_accuracy,
+                    "final_accuracy":    current_accuracy_this_eval,
                 }
 
             # Backup before fix
@@ -147,10 +189,12 @@ class Cognis:
                 self.validator.restore_model(self.interface, backup_interface)
                 logger.warning("Step rolled back.")
 
-            # 7. Explain
+            # 7. Explain — now passes the REAL validator decision instead of
+            # letting the explainer infer promoted/rejected from raw numbers.
             explanation = self.explainer.generate(
                 model_name, monitoring_output, diagnosis_output,
-                healing_output, new_monitoring, step=step
+                healing_output, new_monitoring, step=step,
+                validation_output=validation_output
             )
 
             history.append({
@@ -170,15 +214,17 @@ class Cognis:
                     "baseline_metrics":  self.baseline_metrics,
                     "history":           history,
                     "final_status":      "stable",
-                    "improved":          best_accuracy > self.baseline_metrics["accuracy"],
+                    "improved":          best_accuracy > initial_eval_accuracy,
                     "final_model":       best_model_snapshot,
-                    "strategy_memory":   self.memory.summary()  # Obj 4
+                    "strategy_memory":   self.memory.summary(),  # Obj 4
+                    "initial_accuracy":  initial_eval_accuracy,
+                    "final_accuracy":    best_accuracy,
                 }
 
         # Max iterations — restore best found
         logger.warning(f"Max iterations ({self.max_iters}) reached.")
         self.validator.restore_model(self.interface, best_model_snapshot)
-        improved = best_accuracy > self.baseline_metrics["accuracy"]
+        improved = best_accuracy > initial_eval_accuracy
 
         return {
             "baseline_metrics":  self.baseline_metrics,
@@ -186,5 +232,7 @@ class Cognis:
             "final_status":      "max_iters_reached",
             "improved":          improved,
             "final_model":       best_model_snapshot,
-            "strategy_memory":   self.memory.summary()  # Obj 4
+            "strategy_memory":   self.memory.summary(),  # Obj 4
+            "initial_accuracy":  initial_eval_accuracy,
+            "final_accuracy":    best_accuracy,
         }
