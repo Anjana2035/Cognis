@@ -57,17 +57,15 @@ with st.expander("Why upload a baseline dataset?"):
     distribution, class distribution) against which the current evaluation data
     is compared.
 
-    **If you skip it**, Cognis falls back to treating the uploaded evaluation
-    data as its own baseline.  This is usually fine in demos, but in production
-    it means Cognis has no true reference point — it cannot detect drift or
-    imbalance reliably because the "before" and "after" distributions are the
-    same data.
+    **If you skip it**, Cognis uses a hardcoded synthetic healthy-model baseline:
+    85% accuracy, balanced class distribution, and well-calibrated confidence scores.
+    This gives the monitor a real reference point so it can still detect degradation.
 
     **When you should supply one:**
     - You have a held-out slice of data the model was originally validated on.
     - You are simulating drift by evaluating on a shifted dataset.
-    - You want meaningful signal-based monitoring (confidence drift, class
-      imbalance) that requires a genuine reference distribution.
+    - You want monitoring signals (confidence drift, class imbalance) calibrated
+      to your specific model's actual healthy behaviour.
     """)
 
 # =========================
@@ -99,6 +97,46 @@ def load_data(file):
         return df.iloc[:, :-1].values, df.iloc[:, -1].values
     raise ValueError("Unsupported format")
 
+
+# =========================
+# SYNTHETIC BASELINE BUILDER
+# =========================
+def build_synthetic_baseline(X_test, y_test):
+    """
+    Build a synthetic (X_baseline, y_baseline) that represents a healthy
+    model — 85% accuracy, balanced classes, well-calibrated probabilities.
+
+    This is used when no baseline dataset is uploaded.  It gives the
+    HealthMonitor a real reference point so all 6 monitoring signals
+    can still fire correctly, instead of comparing test data against
+    itself (which makes all deltas zero and detection impossible).
+
+    Parameters
+    ----------
+    X_test : ndarray  — the uploaded evaluation data (used only for shape)
+    y_test : ndarray  — used to infer number of classes
+
+    Returns
+    -------
+    X_baseline : ndarray  (n_synth, n_features)  — zeros, not used by monitor
+    y_baseline : ndarray  (n_synth,)             — balanced class labels
+    """
+    n_classes = len(np.unique(y_test))
+    n_synth   = 500
+    rng       = np.random.default_rng(42)
+
+    # Balanced class labels cycling through all classes
+    y_baseline = np.array(
+        [k for k in range(n_classes)] * (n_synth // n_classes + 1)
+    )[:n_synth].astype(float)
+
+    # X is irrelevant — HealthMonitor never trains on baseline X, it only
+    # uses it through model.evaluate() to get probs.  We pass zeros.
+    X_baseline = np.zeros((n_synth, X_test.shape[1]))
+
+    return X_baseline, y_baseline
+
+
 # =========================
 # RUN COGNIS
 # =========================
@@ -118,8 +156,70 @@ if run_button and uploaded_model and uploaded_data:
             X_baseline, y_baseline = load_data(uploaded_baseline)
             st.info("Using separate baseline dataset.")
         else:
-            X_baseline, y_baseline = X, y
-            st.warning("No baseline uploaded — using test data as baseline.")
+            # ------------------------------------------------------------------
+            # Hardcoded synthetic baseline.
+            # Represents a healthy, well-performing model so that the monitor
+            # always has a genuine reference point even without a real baseline.
+            #
+            # How it works:
+            #   1. We generate 500 balanced synthetic labels (equal classes).
+            #   2. Cognis runs model.evaluate(X_baseline, y_baseline) internally.
+            #   3. The model's real predictions on the zero X_baseline won't be
+            #      meaningful — but that's fine because we patch ModelInterface
+            #      below to intercept the baseline evaluation call and return
+            #      our handcrafted healthy probability matrix instead.
+            #   4. From step 3, HealthMonitor stores:
+            #        - baseline accuracy ≈ 0.85
+            #        - baseline entropy  → low (confident model)
+            #        - baseline probs    → tight distributions around correct class
+            #        - baseline class dist → balanced (equal per class)
+            #   5. All subsequent monitoring compares the real test batch
+            #      against these stored healthy-model reference values.
+            # ------------------------------------------------------------------
+            X_baseline, y_baseline = build_synthetic_baseline(X, y)
+
+            # Build the synthetic probability matrix:
+            # 85% of samples → high confidence (0.90) on correct class
+            # 15% of samples → high confidence on wrong class (simulates errors)
+            n_classes  = len(np.unique(y))
+            n_synth    = len(y_baseline)
+            rng        = np.random.default_rng(42)
+            base_fill  = 0.05 / max(n_classes - 1, 1)
+            synth_probs = np.full((n_synth, n_classes), base_fill)
+
+            for i, cls in enumerate(y_baseline):
+                if rng.random() < 0.85:
+                    synth_probs[i, int(cls)] = 0.90        # correct + confident
+                else:
+                    wrong = (int(cls) + 1) % n_classes
+                    synth_probs[i, wrong]    = 0.90        # wrong + confident (15%)
+            synth_probs /= synth_probs.sum(axis=1, keepdims=True)
+
+            # Patch ModelInterface so the baseline evaluate() call returns
+            # our synthetic probs instead of running the model on zero inputs.
+            # We restore the original method right after Cognis.__init__().
+            from core.model_interface import ModelInterface
+
+            _orig_evaluate = ModelInterface.evaluate
+
+            def _synthetic_evaluate(self_mi, X_in, y_in):
+                # Only intercept the baseline call (identified by matching shape)
+                if X_in.shape[0] == n_synth:
+                    y_pred = np.argmax(synth_probs, axis=1)
+                    return {
+                        "y_true":         y_in,
+                        "y_pred":         y_pred,
+                        "probabilities":  synth_probs
+                    }
+                return _orig_evaluate(self_mi, X_in, y_in)
+
+            ModelInterface.evaluate = _synthetic_evaluate
+
+            st.warning(
+                "No baseline uploaded — using hardcoded healthy-model baseline "
+                "(85% accuracy, balanced classes, well-calibrated). "
+                "For more accurate monitoring, upload a real baseline dataset."
+            )
 
         with st.spinner("Initialising Cognis..."):
             cognis = Cognis(
@@ -130,6 +230,10 @@ if run_button and uploaded_model and uploaded_data:
                 max_iters=3,
                 temperature=1.5
             )
+
+        # Restore original evaluate after baseline init is done
+        if not uploaded_baseline:
+            ModelInterface.evaluate = _orig_evaluate
 
         st.session_state.chat.insert(0, ("user", "Run diagnosis on uploaded model"))
 
@@ -228,7 +332,6 @@ if result and result.get("strategy_memory"):
 
 # =========================
 # SAVE & DEPLOY PANEL
-# Always visible after a run, regardless of whether accuracy improved.
 # =========================
 if result:
     st.markdown("---")
@@ -245,7 +348,6 @@ if result:
 
     save_col, deploy_col = st.columns(2)
 
-    # ---- SAVE ----
     with save_col:
         st.markdown("#### 💾 Save Model & Dataset")
 
@@ -275,7 +377,6 @@ if result:
                 use_container_width=True,
             )
 
-    # ---- DEPLOY ----
     with deploy_col:
         st.markdown("#### 🚀 Deploy Your Model")
         st.markdown(
@@ -294,7 +395,3 @@ if result:
             "Tip: wrap your `.pkl` in a FastAPI or Flask app, "
             "then deploy via Docker on any platform above."
         )
-
-# =========================
-# CHAT UI
-# =========================
