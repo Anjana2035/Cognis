@@ -177,6 +177,23 @@ class Cognis:
                 monitoring_output, new_monitoring, healing_output=healing_output
             )
 
+            # Objective 4 — record the REAL outcome now that we have it.
+            # FIX: previously Fixer recorded win/loss based on its own
+            # internal 25% candidate-selection split, which is a different
+            # measurement than this full-dataset before/after comparison —
+            # a strategy could be promoted here while showing as a loss in
+            # memory. Recording happens exactly once per healing attempt,
+            # tied to whichever strategy was actually applied to the live
+            # model, using the same improvement value the validator itself
+            # used to decide promote/rollback.
+            strategy_name = healing_output.get("strategy_name")
+            if self.memory is not None and strategy_name:
+                self.memory.record(
+                    diagnosis_output["issue"],
+                    strategy_name,
+                    validation_output["improvement"]
+                )
+
             # Track best model across all attempts
             current_acc = new_monitoring["current_metrics"]["accuracy"]
             if current_acc > best_accuracy:

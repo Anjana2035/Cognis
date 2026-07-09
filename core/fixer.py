@@ -15,32 +15,36 @@ class Fixer:
     `set_memory`), strategies are ranked by their historical win-rate
     before each attempt so the engine prefers what has worked before.
 
-    After every attempt the outcome is recorded back into memory,
-    enabling continuous experience-based learning across iterations.
-
-    KEY FIX — "always apply something":
     -----------------------------------------------------------------------
-    Previously the engine would return {"action": "none", "status": "failed"}
-    whenever no strategy *beat* the current baseline accuracy.  This caused
-    every subsequent iteration to show "Applying None (failed)" because the
-    model was stuck at the same accuracy floor and nothing was ever written
-    back.
-
-    The fix: after evaluating all strategies we pick the one with the BEST
-    accuracy (even if it is no better than baseline) and apply it anyway.
-    This ensures:
-      1. The model is always retrained/adjusted each iteration, so drift,
-         noise, and imbalance patterns have a chance to resolve over time.
-      2. The explainer can always report a real action name.
-      3. Validation may still rollback if the fix didn't help — that is
-         correct behaviour and is unchanged.
-
-    Strategy expansion:
+    FIX — memory recording moved out of candidate selection:
     -----------------------------------------------------------------------
-    concept_drift now includes _reweight_classes and _noise_weighting in
-    addition to _fine_tune, giving it more levers to pull across iterations.
-    label_noise and class_imbalance similarly get _fine_tune as a fallback.
-    calibration_error gets _fine_tune as a fallback after temperature scaling.
+    apply_fix() internally splits (X, y) into a 75/25 X_train/X_val purely
+    to decide WHICH candidate strategy looks best before committing to one.
+    Previously, every candidate's X_val-based improvement was written to
+    StrategyMemory as it was tried — but that's a different measurement
+    than the one that actually decides promote/rollback: Cognis's
+    Validator.validate() compares full-dataset accuracy (or ECE, for
+    calibration fixes) before vs. after the chosen fix is applied to the
+    live model. A strategy could easily look like a loss on the internal
+    25% shard while being the one that visibly improved the full dataset
+    and got promoted — which is exactly what produced the "0/1 wins" /
+    "0%" strategy memory panel for a strategy that had just been promoted
+    in the chat log above it.
+
+    apply_fix() no longer calls memory.record() for the internal candidate
+    comparison. Instead it returns "strategy_name" (the __name__ of
+    whichever strategy was actually applied to the live model) inside the
+    result dict. Cognis now calls memory.record() exactly once per healing
+    attempt, AFTER Validator.validate() has run, using the real
+    full-dataset outcome. This makes "attempts" mean "times this strategy
+    was actually used on the live model" and "wins" mean "times that use
+    was actually promoted" — matching what the UI shows elsewhere.
+
+    Exceptions raised by a candidate strategy during selection are still
+    recorded immediately (as a 0.0-improvement loss) — that's independent,
+    genuinely useful signal ("this strategy is broken") that doesn't
+    conflict with the promote/rollback contradiction above, since a
+    crashed candidate is never a candidate for promotion anyway.
     """
 
     def __init__(self, temperature: float = 1.5):
@@ -94,6 +98,7 @@ class Fixer:
                 "action": "none",
                 "status": "skipped",
                 "reason": "No applicable fix",
+                "strategy_name": None,
             }
 
         strategies = list(self.strategy_map[issue])
@@ -105,6 +110,13 @@ class Fixer:
         # Split into train / held-out val to prevent overfitting.
         # We train on X_train, but measure quality on X_val only.
         # If too few samples to split, fall back to full set (small datasets).
+        #
+        # NOTE: this split is used ONLY to pick which candidate strategy to
+        # apply. It is a different, smaller measurement than the full-dataset
+        # before/after comparison Cognis's Validator uses to actually decide
+        # promote/rollback — so its numbers are no longer written to
+        # StrategyMemory (see class docstring). It remains a reasonable
+        # heuristic for candidate selection itself.
         if len(X) >= 20:
             X_train, X_val, y_train, y_val = train_test_split(
                 X, y, test_size=0.25, random_state=42, stratify=y
@@ -120,6 +132,7 @@ class Fixer:
         best_acc = -np.inf
         best_result = None
         best_model = None
+        best_strategy_fn = None
 
         for strategy in strategies:
             try:
@@ -127,19 +140,15 @@ class Fixer:
                 # Train on X_train only
                 result = strategy(candidate, X_train, y_train)
 
-                # Evaluate on held-out X_val — real generalisation score
+                # Evaluate on held-out X_val — used only to pick a candidate
                 preds, _ = candidate.predict(X_val)
                 acc = np.mean(preds == y_val)
                 improvement = acc - baseline_acc
 
                 logger.info(
                     f"Strategy '{result['action']}' acc={round(acc, 4)} "
-                    f"Δ={round(improvement, 4)}"
+                    f"Δ={round(improvement, 4)} (internal selection split)"
                 )
-
-                # Record outcome in memory regardless of whether it won
-                if self._memory is not None:
-                    self._memory.record(issue, strategy.__name__, improvement)
 
                 # KEY FIX: always track the best candidate, even if it
                 # didn't beat baseline.  We want to apply *something*.
@@ -147,9 +156,12 @@ class Fixer:
                     best_acc = acc
                     best_result = result
                     best_model = candidate
+                    best_strategy_fn = strategy
 
             except Exception as e:
                 logger.error(f"Strategy '{strategy.__name__}' failed: {e}")
+                # Genuinely independent signal: this strategy is broken,
+                # regardless of which candidate ends up chosen/applied.
                 if self._memory is not None:
                     self._memory.record(issue, strategy.__name__, 0.0)
                 continue
@@ -166,13 +178,16 @@ class Fixer:
 
             logger.info(
                 f"Applied fix: {best_result['action']} | "
-                f"improvement: {net_improvement}"
+                f"selection-split improvement: {net_improvement}"
             )
             return {
                 "action": best_result["action"],
                 "status": status,
                 "details": best_result.get("details", ""),
                 "improvement": net_improvement,
+                # Real name Cognis needs to record the REAL outcome against,
+                # once Validator has scored the full dataset.
+                "strategy_name": best_strategy_fn.__name__,
             }
 
         logger.warning("All strategies raised exceptions — nothing applied.")
@@ -181,6 +196,7 @@ class Fixer:
             "status": "failed",
             "reason": "All strategies raised exceptions",
             "baseline_accuracy": round(baseline_acc, 4),
+            "strategy_name": None,
         }
 
     # ------------------------------------------------------------------
