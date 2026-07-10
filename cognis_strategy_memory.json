@@ -1,0 +1,38 @@
+{
+  "stats": {
+    "class_imbalance": {
+      "_reweight_classes": {
+        "wins": 0,
+        "total": 0
+      },
+      "_fine_tune": {
+        "wins": 1,
+        "total": 3
+      },
+      "_noise_weighting": {
+        "wins": 0,
+        "total": 0
+      }
+    }
+  },
+  "history": [
+    {
+      "issue": "class_imbalance",
+      "strategy": "_fine_tune",
+      "improvement": 0.0967,
+      "success": true
+    },
+    {
+      "issue": "class_imbalance",
+      "strategy": "_fine_tune",
+      "improvement": 0.0,
+      "success": false
+    },
+    {
+      "issue": "class_imbalance",
+      "strategy": "_fine_tune",
+      "improvement": 0.0,
+      "success": false
+    }
+  ]
+}

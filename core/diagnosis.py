@@ -4,14 +4,6 @@ logger = logging.getLogger(__name__)
 
 
 class DiagnosisEngine:
-    """
-    Rule-based diagnosis engine with safe-state handling.
-
-    FIX: Rebalanced signal weights so that specific signals (class_imbalance,
-    label_noise, calibration_error) can win against the generic concept_drift
-    pattern. Also added a penalise_if mechanism: if a higher-specificity signal
-    fires, concept_drift score is halved so it doesn't drown out the real cause.
-    """
 
     def __init__(self):
         self.issue_rules = {
@@ -21,14 +13,12 @@ class DiagnosisEngine:
                     "entropy_shift":    1,
                     "accuracy_drop":    2
                 },
-                # If any of these fire, concept_drift is penalised (halved)
-                # because a more specific root cause is likely responsible.
                 "penalise_if": {"class_imbalance", "label_noise", "calibration_error"},
                 "description": "Data distribution has shifted, causing model confusion."
             },
             "class_imbalance": {
                 "signals": {
-                    "class_imbalance": 4,   # boosted: highly specific signal
+                    "class_imbalance": 4,   
                     "accuracy_drop":   1
                 },
                 "penalise_if": set(),
@@ -36,14 +26,14 @@ class DiagnosisEngine:
             },
             "label_noise": {
                 "signals": {
-                    "label_noise": 4        # boosted: highly specific signal
+                    "label_noise": 4       
                 },
                 "penalise_if": set(),
                 "description": "High-confidence incorrect predictions indicate noisy labels."
             },
             "calibration_error": {
                 "signals": {
-                    "calibration_error": 3  # boosted: ECE is a precise signal
+                    "calibration_error": 3  
                 },
                 "penalise_if": set(),
                 "description": "Model confidence does not match prediction accuracy."
@@ -51,9 +41,7 @@ class DiagnosisEngine:
         }
 
     def diagnose(self, monitoring_output):
-        """
-        Determines root cause OR confirms healthy state.
-        """
+       
         if not monitoring_output.get("degraded", False):
             logger.info("Model is stable. No degradation detected.")
             return {
@@ -88,7 +76,6 @@ class DiagnosisEngine:
                     used_signals.append(signal_name)
 
             if score > 0:
-                # Penalise if a more specific signal is present
                 penalise = rule.get("penalise_if", set())
                 if penalise & triggered_names:
                     score = score * 0.5

@@ -6,24 +6,6 @@ logger = logging.getLogger(__name__)
 
 
 class Explainer:
-    """
-    LLM-based narrator for Cognis.
-    Uses Gemini REST API with fallback support.
-
-    FIX: generate() previously had no visibility into what the Validator
-    actually decided (promote / rollback). It guessed "promoted" purely by
-    comparing before/after accuracy in the fallback text, and never told
-    the LLM prompt what the real decision was either. That guess can
-    contradict Fixer's own status label — e.g. a strategy the Fixer marks
-    "applied_no_gain" (net_improvement <= 0) could still be narrated as
-    "the fix was successful and the model has been promoted" if the
-    accuracy numbers happened to look favourable in isolation.
-
-    validation_output (the dict returned by Validator.validate(), containing
-    at minimum a "decision" key of "promote" / "rollback") is now threaded
-    through generate() -> _build_prompt() / _fallback(), and is the single
-    source of truth for whether the narration says promoted or rolled back.
-    """
 
     def __init__(self, api_key=None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
@@ -71,9 +53,6 @@ class Explainer:
     def _build_prompt(self, model_name, before, diagnosis, fix, after, validation_output=None):
         before_acc = before["current_metrics"]["accuracy"]
         after_acc  = after["current_metrics"]["accuracy"] if after else None
-
-        # Tell the model the REAL outcome instead of letting it infer one
-        # from raw numbers, which is what produced the earlier contradiction.
         if validation_output is not None:
             decision_line = f"Validator Decision: {validation_output.get('decision')} (this is the ground truth outcome — do not contradict it)"
         else:
@@ -104,14 +83,12 @@ retry with a different strategy. Do not describe a rolled-back fix as successful
         status = fix.get("status", "unknown")
         reason = diagnosis.get("reason", "")
 
-        # Healthy — no fix needed
         if fix.get("action") == "none" and fix.get("status") == "skipped":
             return (
                 f"Attempt {step + 1}: {model_name} passed the health check. "
                 f"No degradation detected — the model is performing as expected."
             )
 
-        # Ground truth: what did the Validator actually decide?
         decision = validation_output.get("decision") if validation_output else None
 
         if after_acc is not None:
@@ -131,8 +108,6 @@ retry with a different strategy. Do not describe a rolled-back fix as successful
                     f"The system will retry with a different strategy."
                 )
             else:
-                # No validator decision available — fall back to a neutral,
-                # non-committal description rather than guessing.
                 result_line = (
                     f"After applying {action}, accuracy is now {round(after_acc, 3)} "
                     f"(previously {round(before_acc, 3)}). Evaluating whether to keep this change."

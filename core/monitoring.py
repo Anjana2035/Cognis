@@ -8,32 +8,19 @@ logger = logging.getLogger(__name__)
 
 
 class HealthMonitor:
-    """
-    Signal-based monitoring system.
-    Computes signals → aggregates → decides degradation.
-
-    FIX B: class_imbalance now uses actual baseline class distribution,
-            not a fake uniform distribution.
-    """
-
+    
     def __init__(self, baseline_metrics, baseline_probs, thresholds=THRESHOLDS,
                  baseline_y=None):
         self.baseline_metrics = baseline_metrics
         self.baseline_probs = baseline_probs
         self.thresholds = thresholds
 
-        # FIX B: store actual baseline class distribution
         if baseline_y is not None:
             counts = np.bincount(baseline_y.astype(int))
             self.baseline_class_dist = counts / counts.sum()
         else:
-            # fall back to deriving from classwise_accuracy keys (equal weight)
             n = len(baseline_metrics.get("classwise_accuracy", {1: 1}))
             self.baseline_class_dist = np.ones(n) / n
-
-    # =========================
-    # SIGNAL DEFINITIONS
-    # =========================
 
     def _accuracy_drop_signal(self, current_metrics):
         drop = self.baseline_metrics["accuracy"] - current_metrics["accuracy"]
@@ -67,10 +54,7 @@ class HealthMonitor:
         }
 
     def _class_imbalance_signal(self, y_pred):
-        """
-        FIX B: Compare current prediction distribution against ACTUAL
-        baseline class distribution, not a uniform assumption.
-        """
+       
         current_dist = np.bincount(y_pred.astype(int)) / len(y_pred)
         baseline_dist = self.baseline_class_dist
 
@@ -97,16 +81,10 @@ class HealthMonitor:
         }
 
     def _calibration_signal(self, y_true, y_pred, probabilities):
-        """
-        FIX C (ChatGPT B): calibration uses ECE (Expected Calibration Error),
-        not a simple confidence-correctness gap, so it's meaningful independent
-        of accuracy. This means calibration_error triggers correctly even when
-        accuracy is unchanged after temperature scaling.
-        """
+        
         confidence = probabilities.max(axis=1)
         correctness = (y_pred == y_true).astype(float)
 
-        # Bin into 10 buckets and compute weighted ECE
         n_bins = 10
         bins = np.linspace(0, 1, n_bins + 1)
         ece = 0.0
@@ -120,13 +98,10 @@ class HealthMonitor:
         return {
             "name": "calibration_error",
             "value": float(ece),
-            "triggered": ece > 0.1,   # ECE > 10% is meaningful miscalibration
+            "triggered": ece > 0.1,   
             "weight": 1
         }
 
-    # =========================
-    # MAIN MONITORING FUNCTION
-    # =========================
 
     def detect_degradation(self, y_true, y_pred, probabilities):
         current_metrics = compute_performance_metrics(

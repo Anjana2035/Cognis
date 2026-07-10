@@ -5,14 +5,7 @@ logger = logging.getLogger(__name__)
 
 
 class Validator:
-    """
-    Validates model improvements and handles rollback/promotion.
-
-    FIX C: calibration_error fix (temperature scaling) is validated using
-    calibration_error signal improvement, NOT accuracy. Accuracy won't change
-    after temperature scaling — that's expected and correct.
-    """
-
+   
     def __init__(self, min_improvement=0.01):
         self.min_improvement = min_improvement
 
@@ -20,14 +13,11 @@ class Validator:
         before_metrics = before_monitoring["current_metrics"]
         after_metrics = after_monitoring["current_metrics"]
 
-        # FIX C: if the fix was temperature_scaling, validate on calibration
-        # improvement (ECE reduction), not accuracy
         fix_action = (healing_output or {}).get("action", "")
 
         if fix_action == "temperature_scaling":
             return self._validate_calibration(before_monitoring, after_monitoring)
 
-        # Default: validate on accuracy
         before_acc = before_metrics["accuracy"]
         after_acc = after_metrics["accuracy"]
         improvement = after_acc - before_acc
@@ -65,7 +55,6 @@ class Validator:
         after_ece = get_ece(after_monitoring)
 
         if before_ece is None or after_ece is None:
-            # Can't compare — fall back to accuracy
             logger.warning("ECE not found in signals — falling back to accuracy validation.")
             before_acc = before_monitoring["current_metrics"]["accuracy"]
             after_acc = after_monitoring["current_metrics"]["accuracy"]
@@ -80,7 +69,7 @@ class Validator:
                 "reason": "ECE unavailable — used accuracy"
             }
 
-        ece_improvement = before_ece - after_ece  # positive = ECE went down = better
+        ece_improvement = before_ece - after_ece  
 
         if ece_improvement > 0.01:
             decision, reason = "promote", "Calibration improved (ECE reduced)"
